@@ -1,5 +1,5 @@
 use std::error::Error;
-use std::fmt::{Display, Formatter, Pointer};
+use std::fmt::{Display, Formatter};
 
 #[derive(Debug, PartialEq)]
 pub struct Property {
@@ -8,10 +8,10 @@ pub struct Property {
 }
 
 impl Property {
-    pub fn new(key: &str, value: &str) -> Property {
+    pub fn new<S: AsRef<str>>(key: S, value: S) -> Property {
         Property {
-            key: key.to_string(),
-            value: value.to_string(),
+            key: key.as_ref().to_string(),
+            value: value.as_ref().to_string(),
         }
     }
 }
@@ -22,16 +22,20 @@ pub enum InternalError {
 }
 
 impl InternalError {
-    pub fn parse_error(line_num: i32, message: &str) -> InternalError {
-        InternalError::ParseError {line_num, message: message.to_string()}
+    pub fn parse_error<S: AsRef<str>>(line_num: i32, message: S) -> InternalError {
+        InternalError::ParseError {
+            line_num,
+            message: message.as_ref().to_string(),
+        }
     }
 }
 
 impl Display for InternalError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            InternalError::ParseError {line_num, message} =>
-                f.write_str(format!("cannot parse property at line {}: {}", line_num, message).as_str())
+            InternalError::ParseError { line_num, message } => f.write_str(
+                format!("cannot parse property at line {}: {}", line_num, message).as_str(),
+            ),
         }
     }
 }
@@ -57,7 +61,6 @@ mod property_tests {
         let p3 = Property::new("1", "3");
         let p4 = Property::new("4", "2");
 
-
         assert_eq!(p1, p2);
         assert_ne!(p1, p3);
         assert_ne!(p1, p4);
@@ -73,7 +76,7 @@ mod property_tests {
 mod error_tests {
 
     #[cfg(test)]
-    mod parse_error_tests{
+    mod parse_error_tests {
         use crate::model::InternalError;
         use crate::model::InternalError::ParseError;
 
@@ -82,11 +85,11 @@ mod error_tests {
             let parse_error = InternalError::parse_error(42, "foobar");
 
             match parse_error {
-                ParseError {line_num, message} => {
+                ParseError { line_num, message } => {
                     assert_eq!(line_num, 42);
                     assert_eq!(message, "foobar");
                 }
-                _ => assert!(false)
+                _ => assert!(false),
             }
         }
         #[test]
