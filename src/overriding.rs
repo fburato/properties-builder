@@ -2,7 +2,7 @@ use crate::model::Property;
 use std::collections::HashMap;
 
 pub trait Overrider {
-    fn resolve_substitution<S: AsRef<str>>(&self, key: S) -> Option<&str>;
+    fn resolve_substitution<S: AsRef<str>>(&self, key: S, prefix: Option<S>) -> Option<&str>;
     fn generate_additions<S: AsRef<str>>(&self, prefix: S) -> Vec<Property>;
 }
 
@@ -85,12 +85,16 @@ impl SpringStyleOverrider {
 }
 
 impl Overrider for SpringStyleOverrider {
-    fn resolve_substitution<S: AsRef<str>>(&self, key: S) -> Option<&str> {
-        let variable_to_resolve = key
-            .as_ref()
-            .replace(".", "_")
-            .replace("-", "_")
-            .to_uppercase();
+    fn resolve_substitution<S: AsRef<str>>(&self, key: S, prefix: Option<S>) -> Option<&str> {
+        let variable_to_resolve = prefix
+            .map(|s| s.as_ref().to_string())
+            .unwrap_or("".to_string())
+            + key
+                .as_ref()
+                .replace(".", "_")
+                .replace("-", "_")
+                .to_uppercase()
+                .as_str();
         self.env.get(variable_to_resolve)
     }
 
@@ -143,7 +147,10 @@ mod spring_style_overrider_tests {
                 "FOO" => "value for foo"
             });
 
-            assert_eq!(testee.resolve_substitution("foo"), Some("value for foo"));
+            assert_eq!(
+                testee.resolve_substitution("foo", None),
+                Some("value for foo")
+            );
         }
 
         #[test]
@@ -152,7 +159,7 @@ mod spring_style_overrider_tests {
                 "FOO" => "value for foo"
             });
 
-            assert_eq!(testee.resolve_substitution("bar"), None);
+            assert_eq!(testee.resolve_substitution("bar", None), None);
         }
 
         #[test]
@@ -161,7 +168,10 @@ mod spring_style_overrider_tests {
                 "FOO" => "value for foo"
             });
 
-            assert_eq!(testee.resolve_substitution("fOo"), Some("value for foo"));
+            assert_eq!(
+                testee.resolve_substitution("fOo", None),
+                Some("value for foo")
+            );
         }
 
         #[test]
@@ -171,7 +181,7 @@ mod spring_style_overrider_tests {
             });
 
             assert_eq!(
-                testee.resolve_substitution("foo.bar"),
+                testee.resolve_substitution("foo.bar", None),
                 Some("value for foo")
             );
         }
@@ -183,7 +193,7 @@ mod spring_style_overrider_tests {
             });
 
             assert_eq!(
-                testee.resolve_substitution("foo.bar.baz"),
+                testee.resolve_substitution("foo.bar.baz", None),
                 Some("value for foo")
             );
         }
@@ -195,7 +205,7 @@ mod spring_style_overrider_tests {
             });
 
             assert_eq!(
-                testee.resolve_substitution("foo-bar"),
+                testee.resolve_substitution("foo-bar", None),
                 Some("value for foo")
             );
         }
@@ -207,7 +217,7 @@ mod spring_style_overrider_tests {
             });
 
             assert_eq!(
-                testee.resolve_substitution("foo-bar-baz"),
+                testee.resolve_substitution("foo-bar-baz", None),
                 Some("value for foo")
             );
         }
@@ -219,7 +229,7 @@ mod spring_style_overrider_tests {
             });
 
             assert_eq!(
-                testee.resolve_substitution("foo_bar"),
+                testee.resolve_substitution("foo_bar", None),
                 Some("value for foo")
             );
         }
@@ -231,8 +241,27 @@ mod spring_style_overrider_tests {
             });
 
             assert_eq!(
-                testee.resolve_substitution("foo_bar_baz"),
+                testee.resolve_substitution("foo_bar_baz", None),
                 Some("value for foo")
+            );
+        }
+
+        #[test]
+        fn should_search_for_variable_with_prefix_if_specified() {
+            let testee = make(hashmap! {
+                "FOO_BAR" => "value1",
+                "PREFIX_FOO_BAR" => "value2",
+                "FOO" => "value3",
+                "PREFIX_FOO" => "value4"
+            });
+
+            assert_eq!(
+                testee.resolve_substitution("foo.bar", Some("PREFIX_")),
+                Some("value2")
+            );
+            assert_eq!(
+                testee.resolve_substitution("foo", Some("PREFIX_")),
+                Some("value4")
             );
         }
     }
@@ -240,61 +269,10 @@ mod spring_style_overrider_tests {
     #[cfg(test)]
     mod addition_tests {
         use super::*;
-        use std::collections::HashSet;
+        use crate::test_utils::assert_contains_exactly_in_any_order;
         use std::fmt::Debug;
 
         const PREFIX: &str = "PREFIX";
-
-        fn contains_exactly_in_any_order<T: PartialEq + Debug>(actual: Vec<T>, expected: Vec<T>) {
-            let mut matched_indexes_in_actual: HashSet<usize> = HashSet::new();
-            let mut unmatched_indexes_in_expected: HashSet<usize> = HashSet::new();
-
-            for (i, e) in expected.iter().enumerate() {
-                let mut actual_index: Option<usize> = None;
-                for (j, a) in actual.iter().enumerate() {
-                    if matched_indexes_in_actual.contains(&j) {
-                        continue;
-                    }
-                    if e == a {
-                        matched_indexes_in_actual.replace(j);
-                        actual_index = Some(j);
-                        break;
-                    }
-                }
-                if actual_index.is_none() {
-                    unmatched_indexes_in_expected.replace(i);
-                }
-            }
-            let mut excess: Vec<usize> = Vec::new();
-            for (i, _) in actual.iter().enumerate() {
-                if !matched_indexes_in_actual.contains(&i) {
-                    excess.push(i);
-                }
-            }
-            let mut result: String = "".to_string();
-            let comma_separator = ", ";
-            if !unmatched_indexes_in_expected.is_empty() {
-                result = result + "The following elements where expected but not found:\n";
-                let mut separator = "[";
-                for i in unmatched_indexes_in_expected.iter() {
-                    result = result + separator + format!("{:?}", expected[*i]).as_str();
-                    separator = comma_separator;
-                }
-                result = result + "]\n"
-            }
-            if !excess.is_empty() {
-                result = result + "The following elements where not expected:\n";
-                let mut separator = "[";
-                for a in excess {
-                    result = result + separator + format!("{:?}", actual[a]).as_str();
-                    separator = comma_separator;
-                }
-                result = result + "]";
-            }
-            if result != "" {
-                panic!("{}", result);
-            }
-        }
         #[test]
         fn should_convert_simple_prefixed_keys_with_values_to_lowercase_key() {
             let testee = make(hashmap! {
@@ -302,7 +280,7 @@ mod spring_style_overrider_tests {
                 "PREFIX_BAR" => "value2"
             });
 
-            contains_exactly_in_any_order(
+            assert_contains_exactly_in_any_order(
                 testee.generate_additions(PREFIX),
                 vec![
                     Property::new("foo", "value1"),
@@ -318,7 +296,7 @@ mod spring_style_overrider_tests {
                 "NOT_PREFIX_BAR" => "value2"
             });
 
-            contains_exactly_in_any_order(
+            assert_contains_exactly_in_any_order(
                 testee.generate_additions(PREFIX),
                 vec![Property::new("foo", "value3")],
             );
@@ -331,7 +309,7 @@ mod spring_style_overrider_tests {
                 "PREFIX_BAR_FOO" => "value1"
             });
 
-            contains_exactly_in_any_order(
+            assert_contains_exactly_in_any_order(
                 testee.generate_additions(PREFIX),
                 vec![
                     Property::new("foo.baz", "value5"),
@@ -340,4 +318,36 @@ mod spring_style_overrider_tests {
             );
         }
     }
+}
+
+pub struct CustomCaseSensitiveStyleOverrider {
+    character_replacement_map: HashMap<char, String>,
+}
+
+impl CustomCaseSensitiveStyleOverrider {
+    pub fn new<S: AsRef<str>>(
+        character_replacement_map: HashMap<char, S>,
+    ) -> CustomCaseSensitiveStyleOverrider {
+        todo!()
+    }
+}
+
+#[cfg(test)]
+mod custom_case_sensitive_style_overrider {
+    use super::*;
+    #[test]
+    fn new_should_create_expected_type() {
+        let replacement: HashMap<char, String> = hashmap! {
+            '.' => "_".to_string(),
+            '-' => "__".to_string(),
+            '_' => "___".to_string()
+        };
+
+        let testee = CustomCaseSensitiveStyleOverrider::new(replacement.clone());
+
+        assert_eq!(replacement, testee.character_replacement_map);
+    }
+
+    #[cfg(test)]
+    mod resolve_tests {}
 }
