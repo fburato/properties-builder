@@ -4,7 +4,7 @@
 
 ## Installation
 
-From a system with the rust toolchain installed, run `cargo install https://github.com/fburato/properties-builder`.
+From a system with the rust toolchain installed, run `cargo install --git https://github.com/fburato/properties-builder` and ensure that the cargo installation directory is present in your system `PATH` variable.
 
 ## Command line reference
 
