@@ -190,16 +190,33 @@ mod error_tests {
 }
 
 #[derive(Parser, Debug)]
+/// Generate a properties file from existing properties overriding the values from environment variables and removing all overrides
 pub struct Args {
     #[arg(long)]
+    /// If provided, output the properties file to a file instead of standard output
     pub output_file: Option<String>,
     #[arg(long, short)]
-    pub spring: bool,
-    #[arg(long, short)]
+    /// Specifies the prefix for environment variables to use for overrides and generation
     pub prefix: String,
     #[arg(long, short)]
+    /// When selected, uses spring style properties replacement, i.e. converts '.,-' into '_' and
+    /// capitalises all text. Incompatible with -r or --replacement options.
+    ///
+    /// For example, passing '--prefix PREFIX_ --spring' causes environment variable PREFIX_FOO=bar'
+    /// to be interpreted as 'foo=bar'
+    pub spring: bool,
+    #[arg(long, short)]
+    /// Specifies character replacement for case-insensitive interpretation in the format 'c#str'.
+    ///
+    /// For instance, passing '--prefix PREFIX -r .#_ -r _#__' causes environment variable PREFIX_foo_bar__baz=foobar
+    /// to be interpreted as 'foo.bar_baz=foobar'. To replace character '-' use '\-' (e.g. '\-#__')
     pub replacement: Vec<String>,
+    /// Original property file to read for override. If not provided, stdin is read instead
     pub file: Option<String>,
+    #[arg(long)]
+    /// If passed, no input file nor stdin is read for override and only properties generated from
+    /// the environment are added to the output
+    pub empty_input: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -209,6 +226,7 @@ pub struct Configuration {
     pub prefix: String,
     pub replacement_map: HashMap<char, String>,
     pub file: Option<String>,
+    pub empty_input: bool,
 }
 
 impl Args {
@@ -220,6 +238,9 @@ impl Args {
         if self.prefix == "" {
             errors.push("prefix must not be empty".to_string());
         }
+        if self.empty_input && self.file.is_some() {
+            errors.push("file cannot be passed if empty_input is present".to_string());
+        }
         // !self.spring || self.replacement.is_empty()
         if self.spring && errors.is_empty() {
             return Ok(Configuration {
@@ -228,6 +249,7 @@ impl Args {
                 replacement_map: HashMap::new(),
                 prefix: self.prefix,
                 file: self.file,
+                empty_input: self.empty_input,
             });
         }
 
@@ -267,6 +289,7 @@ impl Args {
             replacement_map,
             prefix: self.prefix,
             file: self.file,
+            empty_input: self.empty_input,
         })
     }
 }
@@ -300,6 +323,7 @@ mod args_tests {
                 prefix: "PREFIX_".to_string(),
                 replacement: vec![".#_".to_string()],
                 file: None,
+                empty_input: false,
             };
 
             assert_argument_validation_error(
@@ -316,11 +340,29 @@ mod args_tests {
                 prefix: "".to_string(),
                 replacement: vec![],
                 file: None,
+                empty_input: false,
             };
 
             assert_argument_validation_error(
                 &args.validate_and_convert(),
                 &vec!["prefix must not be empty".to_string()],
+            );
+        }
+
+        #[test]
+        fn should_be_invalid_if_file_and_empty_file_present() {
+            let args = Args {
+                output_file: None,
+                spring: true,
+                prefix: "PREFIX_".to_string(),
+                replacement: vec![],
+                file: Some("file".to_string()),
+                empty_input: true,
+            };
+
+            assert_argument_validation_error(
+                &args.validate_and_convert(),
+                &vec!["file cannot be passed if empty_input is present".to_string()],
             );
         }
 
@@ -332,6 +374,7 @@ mod args_tests {
                 prefix: "PREFIX_".to_string(),
                 replacement: vec![],
                 file: Some("file1".to_string()),
+                empty_input: false,
             };
 
             assert_eq!(
@@ -342,6 +385,7 @@ mod args_tests {
                     prefix: "PREFIX_".to_string(),
                     replacement_map: HashMap::new(),
                     file: Some("file1".to_string()),
+                    empty_input: false
                 }
             )
         }
@@ -354,6 +398,7 @@ mod args_tests {
                 prefix: "PREFIX_".to_string(),
                 replacement: vec!["invalid".to_string()],
                 file: None,
+                empty_input: false,
             };
 
             assert_argument_validation_error(&args.validate_and_convert(),
@@ -369,6 +414,7 @@ mod args_tests {
                 prefix: "PREFIX_".to_string(),
                 replacement: vec!["asdf#str".to_string()],
                 file: None,
+                empty_input: false,
             };
 
             assert_argument_validation_error(
@@ -385,6 +431,7 @@ mod args_tests {
                 prefix: "PREFIX_".to_string(),
                 replacement: vec!["invalid1".to_string(), "fdas#str".to_string()],
                 file: None,
+                empty_input: false,
             };
 
             let result = args.validate_and_convert();
@@ -409,6 +456,7 @@ mod args_tests {
                 prefix: "PREFIX_".to_string(),
                 replacement: vec!["-#__".to_string(), ".#_".to_string()],
                 file: None,
+                empty_input: false,
             };
 
             assert_eq!(
@@ -422,6 +470,7 @@ mod args_tests {
                         '-' => "__".to_string(),
                     },
                     file: None,
+                    empty_input: false,
                 }
             )
         }
@@ -434,6 +483,7 @@ mod args_tests {
                 prefix: "PREFIX_".to_string(),
                 replacement: vec!["\\-#__".to_string(), ".#_".to_string()],
                 file: None,
+                empty_input: false,
             };
 
             assert_eq!(
@@ -447,6 +497,7 @@ mod args_tests {
                         '-' => "__".to_string(),
                     },
                     file: None,
+                    empty_input: false,
                 }
             )
         }
@@ -459,6 +510,7 @@ mod args_tests {
                 prefix: "PREFIX_".to_string(),
                 replacement: vec![" - # __ ".to_string(), "  .  # _ ".to_string()],
                 file: None,
+                empty_input: false,
             };
 
             assert_eq!(
@@ -472,6 +524,7 @@ mod args_tests {
                         '-' => "__".to_string(),
                     },
                     file: None,
+                    empty_input: false,
                 }
             )
         }

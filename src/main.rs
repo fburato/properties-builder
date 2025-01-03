@@ -12,6 +12,7 @@ use crate::overriding::{
 use crate::properties_parser::{parse_line, Line};
 use clap::Parser;
 use model::Args;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{stdin, stdout, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -20,7 +21,10 @@ use std::{fs, path};
 
 fn main_exec() -> Result<(), InternalError> {
     let configuration = Args::parse().validate_and_convert()?;
-    let input: Box<dyn BufRead> = if configuration.file.is_none() {
+    let empty_buffer: &[u8] = &[];
+    let input: Box<dyn BufRead> = if configuration.empty_input {
+        Box::new(BufReader::new(empty_buffer))
+    } else if configuration.file.is_none() {
         Box::new(BufReader::new(stdin()))
     } else {
         let f = File::open(configuration.file.clone().unwrap())?;
@@ -57,26 +61,31 @@ fn main_exec() -> Result<(), InternalError> {
         ))
     };
 
+    let mut defined_properties: HashSet<String> = HashSet::new();
+
     for (line_num, line_result) in input.lines().enumerate() {
         let line = line_result?;
-        let parse_result = parse_line(line.as_str(), line_num as i32)?;
+        let parse_result = parse_line(line.as_str(), (line_num + 1) as i32)?;
         match parse_result {
-            Line::Ignorable(line) => writeln!(output, "{}\n", line)?,
+            Line::Ignorable(line) => writeln!(output, "{}", line)?,
             Line::Prop(property) => {
                 let overridden = overrider.resolve_substitution(
                     property.key.as_str(),
                     Some(configuration.prefix.as_str()),
                 );
                 if let Some(overridden_value) = overridden {
-                    writeln!(output, "{}={}\n", property.key, overridden_value)?;
+                    writeln!(output, "{}={}", property.key, overridden_value)?;
                 } else {
-                    writeln!(output, "{}={}\n", property.key, property.value)?;
+                    writeln!(output, "{}={}", property.key, property.value)?;
                 }
+                defined_properties.replace(property.key);
             }
         }
     }
     for property in overrider.generate_additions(configuration.prefix.as_str()) {
-        writeln!(output, "{}={}\n", property.key, property.value)?;
+        if !defined_properties.contains(property.key.as_str()) {
+            writeln!(output, "{}={}", property.key, property.value)?;
+        }
     }
     output.flush()?;
     if same_input_output_file {
