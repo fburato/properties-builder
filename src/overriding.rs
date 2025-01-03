@@ -3,8 +3,8 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 
 pub trait Overrider {
-    fn resolve_substitution<S: AsRef<str>>(&self, key: S, prefix: Option<S>) -> Option<&str>;
-    fn generate_additions<S: AsRef<str>>(&self, prefix: S) -> Vec<Property>;
+    fn resolve_substitution(&self, key: &str, prefix: Option<&str>) -> Option<&str>;
+    fn generate_additions(&self, prefix: &str) -> Vec<Property>;
 }
 
 #[derive(Clone)]
@@ -80,18 +80,15 @@ pub struct SpringStyleOverrider {
 }
 
 impl SpringStyleOverrider {
-    fn new(env: Environment) -> SpringStyleOverrider {
+    pub fn new(env: Environment) -> SpringStyleOverrider {
         SpringStyleOverrider { env }
     }
 }
 
 impl Overrider for SpringStyleOverrider {
-    fn resolve_substitution<S: AsRef<str>>(&self, key: S, prefix: Option<S>) -> Option<&str> {
-        let variable_to_resolve = prefix
-            .map(|s| s.as_ref().to_string())
-            .unwrap_or("".to_string())
+    fn resolve_substitution(&self, key: &str, prefix: Option<&str>) -> Option<&str> {
+        let variable_to_resolve = prefix.map(|s| s.to_string()).unwrap_or("".to_string())
             + key
-                .as_ref()
                 .replace(".", "_")
                 .replace("-", "_")
                 .to_uppercase()
@@ -99,8 +96,8 @@ impl Overrider for SpringStyleOverrider {
         self.env.get(variable_to_resolve)
     }
 
-    fn generate_additions<S: AsRef<str>>(&self, prefix: S) -> Vec<Property> {
-        let prefix_match = prefix.as_ref().to_string();
+    fn generate_additions(&self, prefix: &str) -> Vec<Property> {
+        let prefix_match = prefix.to_string();
         let prefixed_entries: HashMap<&str, &str> = self
             .env
             .env
@@ -351,18 +348,16 @@ impl CustomCaseSensitiveStyleOverrider {
     }
 }
 impl Overrider for CustomCaseSensitiveStyleOverrider {
-    fn resolve_substitution<S: AsRef<str>>(&self, key: S, prefix: Option<S>) -> Option<&str> {
-        let mut transformed_key: String = prefix
-            .map(|s| s.as_ref().to_string())
-            .unwrap_or("".to_string());
-        for c in key.as_ref().chars() {
+    fn resolve_substitution(&self, key: &str, prefix: Option<&str>) -> Option<&str> {
+        let mut transformed_key: String = prefix.map(|s| s.to_string()).unwrap_or("".to_string());
+        for c in key.chars() {
             transformed_key = transformed_key + self.process_character(c).as_str()
         }
         self.environment.get(transformed_key)
     }
 
-    fn generate_additions<S: AsRef<str>>(&self, prefix: S) -> Vec<Property> {
-        let prefix_match = prefix.as_ref().to_string();
+    fn generate_additions(&self, prefix: &str) -> Vec<Property> {
+        let prefix_match = prefix.to_string();
         let prefixed_entries: HashMap<&str, &str> = self
             .environment
             .env

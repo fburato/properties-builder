@@ -2,11 +2,12 @@ use clap::Parser;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::io;
 
 #[derive(Debug, PartialEq)]
 pub struct Property {
-    key: String,
-    value: String,
+    pub key: String,
+    pub value: String,
 }
 
 impl Property {
@@ -18,10 +19,11 @@ impl Property {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub enum InternalError {
     ParseError { line_num: i32, message: String },
     ArgumentValidationErrors(Vec<String>),
+    FileAccessError(io::Error),
 }
 
 impl InternalError {
@@ -50,7 +52,16 @@ impl Display for InternalError {
                 )
                 .as_str(),
             ),
+            InternalError::FileAccessError(io_error) => {
+                f.write_str(format!("file access error: {}", io_error).as_str())
+            }
         }
+    }
+}
+
+impl From<io::Error> for InternalError {
+    fn from(value: io::Error) -> Self {
+        InternalError::FileAccessError(value)
     }
 }
 
@@ -88,7 +99,6 @@ mod property_tests {
 
 #[cfg(test)]
 mod error_tests {
-
     #[cfg(test)]
     mod parse_error_tests {
         use crate::model::InternalError;
@@ -125,6 +135,42 @@ mod error_tests {
             assert_eq!(result, "invalid arguments:\n- one\n- two")
         }
 
+        fn assert_parse_error_equal(actual: &InternalError, expected: &InternalError) {
+            match actual {
+                ParseError { line_num, message } => {
+                    let (actual_line_num, actual_message) = (line_num, message);
+                    match expected {
+                        ParseError { line_num, message } => {
+                            let (expected_line_num, expected_message) = (line_num, message);
+                            assert_eq!(actual_line_num, expected_line_num);
+                            assert_eq!(actual_message, expected_message);
+                        }
+                        _ => panic!("expected value is not ParseError"),
+                    }
+                }
+                _ => panic!("actual is not ParseError"),
+            }
+        }
+
+        fn assert_parse_error_not_equal(actual: &InternalError, expected: &InternalError) {
+            match actual {
+                ParseError { line_num, message } => {
+                    let (actual_line_num, actual_message) = (line_num, message);
+                    match expected {
+                        ParseError { line_num, message } => {
+                            let (expected_line_num, expected_message) = (line_num, message);
+                            assert_ne!(
+                                (actual_line_num, actual_message),
+                                (expected_line_num, expected_message)
+                            );
+                        }
+                        _ => panic!("expected value is not ParseError"),
+                    }
+                }
+                _ => panic!("actual is not ParseError"),
+            }
+        }
+
         #[test]
         fn eq_should_be_well_implemented_for_parse_error() {
             let e1 = InternalError::parse_error(23, "foo");
@@ -132,13 +178,13 @@ mod error_tests {
             let e3 = InternalError::parse_error(55, "foo");
             let e4 = InternalError::parse_error(23, "bar");
 
-            assert_eq!(e1, e2);
-            assert_ne!(e1, e3);
-            assert_ne!(e1, e4);
+            assert_parse_error_equal(&e1, &e2);
+            assert_parse_error_not_equal(&e1, &e3);
+            assert_parse_error_not_equal(&e1, &e4);
 
-            assert_eq!(e2, e1);
-            assert_ne!(e3, e1);
-            assert_ne!(e4, e1);
+            assert_parse_error_equal(&e2, &e1);
+            assert_parse_error_not_equal(&e3, &e1);
+            assert_parse_error_not_equal(&e4, &e1);
         }
     }
 }
@@ -231,6 +277,21 @@ mod args_tests {
     mod validate_and_covert_tests {
         use super::super::*;
         use crate::test_utils::assert_contains_exactly_in_any_order;
+
+        fn assert_argument_validation_error(
+            result: &Result<Configuration, InternalError>,
+            messages: &Vec<String>,
+        ) {
+            match result {
+                Ok(_) => panic!("result is successful, error expected"),
+                Err(err) => match err {
+                    InternalError::ArgumentValidationErrors(actual_messages) => {
+                        assert_contains_exactly_in_any_order(actual_messages, messages)
+                    }
+                    _ => panic!("error is not ArgumentValidationError"),
+                },
+            }
+        }
         #[test]
         fn should_be_invalid_if_spring_flag_true_and_replacement_present() {
             let args = Args {
@@ -241,11 +302,9 @@ mod args_tests {
                 file: None,
             };
 
-            assert_eq!(
-                args.validate_and_convert(),
-                Err(InternalError::ArgumentValidationErrors(vec![
-                    "replacements are not allowed when 'spring' flag is passed".to_string()
-                ]))
+            assert_argument_validation_error(
+                &args.validate_and_convert(),
+                &vec!["replacements are not allowed when 'spring' flag is passed".to_string()],
             );
         }
 
@@ -259,11 +318,9 @@ mod args_tests {
                 file: None,
             };
 
-            assert_eq!(
-                args.validate_and_convert(),
-                Err(InternalError::ArgumentValidationErrors(vec![
-                    "prefix must not be empty".to_string()
-                ]))
+            assert_argument_validation_error(
+                &args.validate_and_convert(),
+                &vec!["prefix must not be empty".to_string()],
             );
         }
 
@@ -278,14 +335,14 @@ mod args_tests {
             };
 
             assert_eq!(
-                args.validate_and_convert(),
-                Ok(Configuration {
+                args.validate_and_convert().unwrap(),
+                Configuration {
                     output_file: Some("output2".to_string()),
                     spring: true,
                     prefix: "PREFIX_".to_string(),
                     replacement_map: HashMap::new(),
                     file: Some("file1".to_string()),
-                })
+                }
             )
         }
 
@@ -299,9 +356,9 @@ mod args_tests {
                 file: None,
             };
 
-            assert_eq!(args.validate_and_convert(), Err(InternalError::ArgumentValidationErrors(
-                vec!["replacement 'invalid' does not contain valid mapping in the format 'c#str': '#' missing".to_string()]
-            )));
+            assert_argument_validation_error(&args.validate_and_convert(),
+                &vec!["replacement 'invalid' does not contain valid mapping in the format 'c#str': '#' missing".to_string()]
+            );
         }
 
         #[test]
@@ -314,9 +371,10 @@ mod args_tests {
                 file: None,
             };
 
-            assert_eq!(args.validate_and_convert(), Err(InternalError::ArgumentValidationErrors(
-                vec!["replacement 'asdf#str' does not contain valid mapping in the format 'c#str': 'asdf' is not a character".to_string()]
-            )));
+            assert_argument_validation_error(
+                &args.validate_and_convert(),
+                &vec!["replacement 'asdf#str' does not contain valid mapping in the format 'c#str': 'asdf' is not a character".to_string()]
+            );
         }
 
         #[test]
@@ -354,8 +412,8 @@ mod args_tests {
             };
 
             assert_eq!(
-                args.validate_and_convert(),
-                Ok(Configuration {
+                args.validate_and_convert().unwrap(),
+                Configuration {
                     output_file: None,
                     spring: false,
                     prefix: "PREFIX_".to_string(),
@@ -364,7 +422,7 @@ mod args_tests {
                         '-' => "__".to_string(),
                     },
                     file: None,
-                })
+                }
             )
         }
 
@@ -379,8 +437,8 @@ mod args_tests {
             };
 
             assert_eq!(
-                args.validate_and_convert(),
-                Ok(Configuration {
+                args.validate_and_convert().unwrap(),
+                Configuration {
                     output_file: None,
                     spring: false,
                     prefix: "PREFIX_".to_string(),
@@ -389,7 +447,7 @@ mod args_tests {
                         '-' => "__".to_string(),
                     },
                     file: None,
-                })
+                }
             )
         }
 
@@ -404,8 +462,8 @@ mod args_tests {
             };
 
             assert_eq!(
-                args.validate_and_convert(),
-                Ok(Configuration {
+                args.validate_and_convert().unwrap(),
+                Configuration {
                     output_file: Some("foo".to_string()),
                     spring: false,
                     prefix: "PREFIX_".to_string(),
@@ -414,7 +472,7 @@ mod args_tests {
                         '-' => "__".to_string(),
                     },
                     file: None,
-                })
+                }
             )
         }
     }
